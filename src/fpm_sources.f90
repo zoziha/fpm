@@ -48,6 +48,7 @@ function parse_source(source_file_path,error) result(source)
 end function parse_source
 
 !> Add to `sources` by looking for source files in `directory`
+!> @note Supports parallel reading of files within a folder
 subroutine add_sources_from_dir(sources,directory,scope,with_executables,recurse,error)
     !> List of `[[srcfile_t]]` objects to append to. Allocated if not allocated
     type(srcfile_t), allocatable, intent(inout), target :: sources(:)
@@ -62,12 +63,18 @@ subroutine add_sources_from_dir(sources,directory,scope,with_executables,recurse
     !> Error handling
     type(error_t), allocatable, intent(out) :: error
 
+    type error_wrapper
+        type(error_t), allocatable :: error
+    end type error_wrapper
+
     integer :: i
     logical, allocatable :: is_source(:), exclude_source(:)
     type(string_t), allocatable :: file_names(:)
     type(string_t), allocatable :: src_file_names(:)
     type(string_t), allocatable :: existing_src_files(:)
     type(srcfile_t), allocatable :: dir_sources(:)
+    logical :: parse_failed, skip_current
+    type(error_wrapper), allocatable :: dir_errors(:)
 
     ! Scan directory for sources
     call list_files(directory, file_names,recurse=merge(recurse,.true.,present(recurse)))
@@ -89,11 +96,23 @@ subroutine add_sources_from_dir(sources,directory,scope,with_executables,recurse
 
     allocate(dir_sources(size(src_file_names)))
     allocate(exclude_source(size(src_file_names)))
+    allocate(dir_errors(size(src_file_names)))
 
+    parse_failed = .false.
+    !$omp parallel do private(skip_current)
     do i = 1, size(src_file_names)
 
-        dir_sources(i) = parse_source(src_file_names(i)%s,error)
-        if (allocated(error)) return
+        !$omp atomic read
+        skip_current = parse_failed
+
+        if (.not.skip_current) then
+            dir_sources(i) = parse_source(src_file_names(i)%s,dir_errors(i)%error)
+        end if
+
+        if (allocated(dir_errors(i)%error)) then
+            !$omp atomic write
+            parse_failed = .true.
+        end if
 
         dir_sources(i)%unit_scope = scope
         allocate(dir_sources(i)%link_libraries(0))
@@ -111,11 +130,21 @@ subroutine add_sources_from_dir(sources,directory,scope,with_executables,recurse
 
     end do
 
+    if (parse_failed) then
+        do i = 1, size(src_file_names)
+            if (allocated(dir_errors(i)%error)) then
+                call move_alloc(dir_errors(i)%error, error)
+                return
+            end if
+        end do
+    end if
+
     if (.not.allocated(sources)) then
         sources = pack(dir_sources,.not.exclude_source)
     else
         sources = [sources, pack(dir_sources,.not.exclude_source)]
     end if
+
 
 end subroutine add_sources_from_dir
 

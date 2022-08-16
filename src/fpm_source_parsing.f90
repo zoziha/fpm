@@ -183,7 +183,7 @@ function parse_f_source(f_filename,error) result(f_source)
 
                 if (index(file_lines_lower(i)%s,'::') > 0) then
 
-                    temp_string = split_n(file_lines_lower(i)%s,delims=':',n=2,stat=stat)
+                    call split_n(file_lines_lower(i)%s,delims=':',n=2,substring=temp_string,stat=stat)
                     if (stat /= 0) then
                         call file_parse_error(error,f_filename, &
                                 'unable to find used module name',i, &
@@ -191,7 +191,7 @@ function parse_f_source(f_filename,error) result(f_source)
                         return
                     end if
 
-                    mod_name = split_n(temp_string,delims=' ,',n=1,stat=stat)
+                    call split_n(temp_string,delims=' ,',n=1,substring=mod_name,stat=stat)
                     if (stat /= 0) then
                         call file_parse_error(error,f_filename, &
                                  'unable to find used module name',i, &
@@ -201,7 +201,8 @@ function parse_f_source(f_filename,error) result(f_source)
 
                 else
 
-                    mod_name = split_n(file_lines_lower(i)%s,n=2,delims=' ,',stat=stat)
+                    call split_n(file_lines_lower(i)%s,n=2,delims=' ,',substring=mod_name,stat=stat)
+                    ! print *, 'F: ', f_filename, " L: ", file_lines_lower(i)%s, " M: ", mod_name, " S: ", stat
                     if (stat /= 0) then
                         call file_parse_error(error,f_filename, &
                                 'unable to find used module name',i, &
@@ -224,7 +225,7 @@ function parse_f_source(f_filename,error) result(f_source)
 
                 if (pass == 2) then
 
-                    f_source%modules_used(n_use)%s = mod_name
+                    f_source%modules_used(n_use) = string_t(mod_name)
 
                 end if
 
@@ -242,8 +243,8 @@ function parse_f_source(f_filename,error) result(f_source)
                     n_include = n_include + 1
 
                     if (pass == 2) then
-                        f_source%include_dependencies(n_include)%s = &
-                         & split_n(file_lines(i)%s,n=2,delims="'"//'"',stat=stat)
+                        call split_n(file_lines(i)%s,n=2,delims="'"//'"',&
+                            substring=f_source%include_dependencies(n_include)%s,stat=stat)
                         if (stat /= 0) then
                             call file_parse_error(error,f_filename, &
                                   'unable to find include file name',i, &
@@ -317,7 +318,7 @@ function parse_f_source(f_filename,error) result(f_source)
             ! Extract name of submodule if is submodule
             if (index(file_lines_lower(i)%s,'submodule') == 1) then
 
-                mod_name = split_n(file_lines_lower(i)%s,n=3,delims='()',stat=stat)
+                call split_n(file_lines_lower(i)%s,n=3,delims='()',substring=mod_name,stat=stat)
                 if (stat /= 0) then
                     call file_parse_error(error,f_filename, &
                           'unable to get submodule name',i, &
@@ -333,7 +334,7 @@ function parse_f_source(f_filename,error) result(f_source)
 
                 n_mod = n_mod + 1
 
-                temp_string = split_n(file_lines_lower(i)%s,n=2,delims='()',stat=stat)
+                call split_n(file_lines_lower(i)%s,n=2,delims='()',substring=temp_string,stat=stat)
                 if (stat /= 0) then
                     call file_parse_error(error,f_filename, &
                           'unable to get submodule ancestry',i, &
@@ -366,9 +367,9 @@ function parse_f_source(f_filename,error) result(f_source)
                         return
                     end if
 
-                    f_source%modules_used(n_use)%s = temp_string
-                    f_source%parent_modules(n_parent)%s = temp_string
-                    f_source%modules_provided(n_mod)%s = mod_name
+                    f_source%modules_used(n_use) = string_t(temp_string)
+                    f_source%parent_modules(n_parent) = string_t(temp_string)
+                    f_source%modules_provided(n_mod) = string_t(mod_name)
 
                 end if
 
@@ -380,7 +381,7 @@ function parse_f_source(f_filename,error) result(f_source)
             !  (no modules allowed after program def)
             if (index(file_lines_lower(i)%s,'program ') == 1) then
 
-                temp_string = split_n(file_lines_lower(i)%s,n=2,delims=' ',stat=stat)
+                call split_n(file_lines_lower(i)%s,n=2,delims=' ',substring=temp_string,stat=stat)
                 if (stat == 0) then
 
                     if (scan(temp_string,'=(')>0 ) then
@@ -489,8 +490,8 @@ function parse_c_source(c_filename,error) result(c_source)
 
                 if (pass == 2) then
 
-                    c_source%include_dependencies(n_include)%s = &
-                     &   split_n(file_lines(i)%s,n=2,delims='"',stat=stat)
+                    call split_n(file_lines(i)%s,n=2,delims='"',&
+                        substring=c_source%include_dependencies(n_include)%s,stat=stat)
                     if (stat /= 0) then
                         call file_parse_error(error,c_filename, &
                             'unable to get c include file',i, &
@@ -521,13 +522,15 @@ end function parse_c_source
 !> stat = 1 on return if the index
 !>  is not found
 !>
-function split_n(string,delims,n,stat) result(substring)
+!> @note When parsing files in parallel, the original `split_n` function will have a bug
+!> when returning `substring` to an alloctable string, which is replaced by a subroutine now
+pure subroutine split_n(string,delims,n,substring,stat)
 
     character(*), intent(in) :: string
     character(*), intent(in) :: delims
     integer, intent(in) :: n
     integer, intent(out) :: stat
-    character(:), allocatable :: substring
+    character(:), allocatable, intent(out) :: substring
 
     integer :: i
     character(:), allocatable :: string_parts(:)
@@ -552,7 +555,7 @@ function split_n(string,delims,n,stat) result(substring)
     substring = trim(adjustl(string_parts(i)))
     stat = 0
 
-end function split_n
+end subroutine split_n
 
 
 !> Parse a subsequence of blank-separated tokens within a string

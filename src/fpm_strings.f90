@@ -318,7 +318,7 @@ end function string_len_trim
 !>Author: John S. Urban
 !!License: Public Domain
 !! parse string on delimiter characters and store tokens into an allocatable array
-subroutine split(input_line,array,delimiters,order,nulls)
+pure subroutine split(input_line,array,delimiters,order,nulls)
     !! given a line of structure " par1 par2 par3 ... parn " store each par(n) into a separate variable in array.
     !!
     !! * by default adjacent delimiters in the input string do not create an empty string in the output array
