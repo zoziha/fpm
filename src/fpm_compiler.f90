@@ -828,7 +828,7 @@ end subroutine new_archiver
 
 
 !> Compile a Fortran object
-subroutine compile_fortran(self, input, output, args, log_file, stat)
+subroutine compile_fortran(self, input, output, args, log_file, deps_file, stat)
     !> Instance of the compiler object
     class(compiler_t), intent(in) :: self
     !> Source file input
@@ -839,16 +839,25 @@ subroutine compile_fortran(self, input, output, args, log_file, stat)
     character(len=*), intent(in) :: args
     !> Compiler output log file
     character(len=*), intent(in) :: log_file
+    !> Dependency file
+    character(len=*), intent(in) :: deps_file
     !> Status flag
     integer, intent(out) :: stat
+    integer :: deps_unit
+
+    open(newunit=deps_unit, file=deps_file, action="write")
+    write(deps_unit, '(a)') 'files = "'//input//'"'
+    write(deps_unit, '(a)') 'values = ["'//self%fc//'", "'//args//'"]'
+    close(deps_unit)
 
     call run(self%fc // " -c " // input // " " // args // " -o " // output, &
         & echo=self%echo, verbose=self%verbose, redirect=log_file, exitstat=stat)
+
 end subroutine compile_fortran
 
 
 !> Compile a C object
-subroutine compile_c(self, input, output, args, log_file, stat)
+subroutine compile_c(self, input, output, args, log_file, deps_file, stat)
     !> Instance of the compiler object
     class(compiler_t), intent(in) :: self
     !> Source file input
@@ -859,8 +868,16 @@ subroutine compile_c(self, input, output, args, log_file, stat)
     character(len=*), intent(in) :: args
     !> Compiler output log file
     character(len=*), intent(in) :: log_file
+    !> Dependency file
+    character(len=*), intent(in) :: deps_file
     !> Status flag
     integer, intent(out) :: stat
+    integer :: deps_unit
+
+    open(newunit=deps_unit, file=deps_file, action="write")
+    write(deps_unit, '(a)') 'files = "'//input//'"'
+    write(deps_unit, '(a)') 'values = ["'//self%cc//'", "'//args//'"]'
+    close(deps_unit)
 
     call run(self%cc // " -c " // input // " " // args // " -o " // output, &
         & echo=self%echo, verbose=self%verbose, redirect=log_file, exitstat=stat)
@@ -868,7 +885,7 @@ end subroutine compile_c
 
 
 !> Link an executable
-subroutine link(self, output, args, log_file, stat)
+subroutine link(self, output, args, log_file, deps_file, stat)
     !> Instance of the compiler object
     class(compiler_t), intent(in) :: self
     !> Output file of object
@@ -877,8 +894,16 @@ subroutine link(self, output, args, log_file, stat)
     character(len=*), intent(in) :: args
     !> Compiler output log file
     character(len=*), intent(in) :: log_file
+    !> Dependency file
+    character(len=*), intent(in) :: deps_file
     !> Status flag
     integer, intent(out) :: stat
+    integer :: deps_unit
+
+    open(newunit=deps_unit, file=deps_file, action="write")
+    write(deps_unit, '(a)') 'files = "'//output//'"'
+    write(deps_unit, '(a)') 'values = ["'//self%fc//'", "'//args//'"]'
+    close(deps_unit)
 
     call run(self%fc // " " // args // " -o " // output, echo=self%echo, &
         & verbose=self%verbose, redirect=log_file, exitstat=stat)
@@ -889,7 +914,7 @@ end subroutine link
 !> @todo An OMP critical section is added for Windows OS,
 !> which may be related to a bug in Mingw64-openmp and is expected to be resolved in the future,
 !> see issue #707 and #708.
-subroutine make_archive(self, output, args, log_file, stat)
+subroutine make_archive(self, output, args, log_file, deps_file, stat)
     !> Instance of the archiver object
     class(archiver_t), intent(in) :: self
     !> Name of the archive to generate
@@ -898,8 +923,16 @@ subroutine make_archive(self, output, args, log_file, stat)
     type(string_t), intent(in) :: args(:)
     !> Compiler output log file
     character(len=*), intent(in) :: log_file
+    !> Dependency file
+    character(len=*), intent(in) :: deps_file
     !> Status flag
     integer, intent(out) :: stat
+    integer :: deps_unit
+
+    open(newunit=deps_unit, file=deps_file, action="write")
+    write(deps_unit, '(a)') 'files = "'//output//'"'
+    write(deps_unit, '(a)') 'values = ["'//self%ar//'", "'//string_cat(args, " ")//'"]'
+    close(deps_unit)
 
     if (self%use_response_file) then
         !$omp critical

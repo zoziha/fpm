@@ -79,6 +79,9 @@ type build_target_t
     !> File path of build log file relative to cwd
     character(:), allocatable :: output_log_file
 
+    !> File path of dependency log file relative to cwd
+    character(:), allocatable :: dependency_log_file
+
     !> Name of parent package
     character(:), allocatable :: package_name
 
@@ -729,6 +732,7 @@ subroutine resolve_target_linking(targets, model)
             target%output_dir = get_output_dir(model%build_prefix, target%compile_flags)
             target%output_file = join_path(target%output_dir, target%output_name)
             target%output_log_file = join_path(target%output_dir, target%output_name)//'.log'
+            target%dependency_log_file = join_path(target%output_dir, target%output_name)//'.deps'
         end associate
 
     end do
@@ -767,6 +771,7 @@ subroutine resolve_target_linking(targets, model)
                    & target%compile_flags//local_link_flags)
                 target%output_file = join_path(target%output_dir, target%output_name)
                 target%output_log_file = join_path(target%output_dir, target%output_name)//'.log'
+                target%dependency_log_file = join_path(target%output_dir, target%output_name)//'.deps'
         end if
 
         end associate

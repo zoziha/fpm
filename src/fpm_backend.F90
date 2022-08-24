@@ -317,19 +317,20 @@ subroutine build_target(model,target,verbose,stat)
 
     case (FPM_TARGET_OBJECT)
         call model%compiler%compile_fortran(target%source%file_name, target%output_file, &
-            & target%compile_flags, target%output_log_file, stat)
+            & target%compile_flags, target%output_log_file, target%dependency_log_file, stat)
 
     case (FPM_TARGET_C_OBJECT)
         call model%compiler%compile_c(target%source%file_name, target%output_file, &
-            & target%compile_flags, target%output_log_file, stat)
+            & target%compile_flags, target%output_log_file, target%dependency_log_file, stat)
 
     case (FPM_TARGET_EXECUTABLE)
         call model%compiler%link(target%output_file, &
-            & target%compile_flags//" "//target%link_flags, target%output_log_file, stat)
+            & target%compile_flags//" "//target%link_flags, target%output_log_file, &
+            & target%dependency_log_file, stat)
 
     case (FPM_TARGET_ARCHIVE)
         call model%archiver%make_archive(target%output_file, target%link_objects, &
-            & target%output_log_file, stat)
+            & target%output_log_file, target%dependency_log_file, stat)
 
     end select
 
