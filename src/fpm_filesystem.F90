@@ -2,6 +2,7 @@
 !!
 module fpm_filesystem
     use,intrinsic :: iso_fortran_env, only : stdin=>input_unit, stdout=>output_unit, stderr=>error_unit
+    use tomlf_utils_io, only: read_whole_file
     use fpm_environment, only: get_os_type, &
                                OS_UNKNOWN, OS_LINUX, OS_MACOS, OS_WINDOWS, &
                                OS_CYGWIN, OS_SOLARIS, OS_FREEBSD, OS_OPENBSD
@@ -328,38 +329,52 @@ integer function number_of_rows(s) result(nrows)
 end function number_of_rows
 
 !> read lines into an array of TYPE(STRING_T) variables expanding tabs
-function read_lines_expanded(fh) result(lines)
-    integer, intent(in) :: fh
+function read_lines_expanded(file_name) result(lines)
+    character(*), intent(in) :: file_name
     type(string_t), allocatable :: lines(:)
+    character(:), allocatable :: text_buffer
+    integer :: stat
 
-    integer :: i
-    integer :: ilen
-    character(LINE_BUFFER_LEN) :: line_buffer_read, line_buffer_expanded
-
-    allocate(lines(number_of_rows(fh)))
-    do i = 1, size(lines)
-        read(fh, '(A)') line_buffer_read
-        call notabs(line_buffer_read, line_buffer_expanded, ilen)
-        lines(i)%s = trim(line_buffer_expanded)
-    end do
+    call read_whole_file(file_name, text_buffer, stat)
+    lines = text_to_lines(text_buffer, notab=.true.)
 
 end function read_lines_expanded
 
 !> read lines into an array of TYPE(STRING_T) variables
-function read_lines(fh) result(lines)
-    integer, intent(in) :: fh
+function read_lines(file_name) result(lines)
+    character(*), intent(in) :: file_name
     type(string_t), allocatable :: lines(:)
+    character(:), allocatable :: text_buffer
+    integer :: stat
 
-    integer :: i
-    character(LINE_BUFFER_LEN) :: line_buffer
-
-    allocate(lines(number_of_rows(fh)))
-    do i = 1, size(lines)
-        read(fh, '(A)') line_buffer
-        lines(i)%s = trim(line_buffer)
-    end do
+    call read_whole_file(file_name, text_buffer, stat)
+    lines = text_to_lines(text_buffer, notab=.false.)
 
 end function read_lines
+
+!> Casting text into an array of TYPE(STRING_T) variables
+impure function text_to_lines(text, notab) result(lines)
+    character(*), intent(in) :: text
+    logical, intent(in) :: notab
+    type(string_t), allocatable :: lines(:)
+
+    character(len=:), allocatable :: lines_char(:)
+    integer :: i, ilen
+
+    call split(text, lines_char, new_line('a'))
+    allocate(lines(size(lines_char)))
+    if (notab) then
+        do i = 1, size(lines_char)
+            call notabs(lines_char(i), lines_char(i), ilen)
+            lines(i)%s = trim(lines_char(i))
+        end do
+    else
+        do i = 1, size(lines_char)
+            lines(i)%s = trim(lines_char(i))
+        end do
+    end if
+
+end function text_to_lines
 
 !> Create a directory. Create subdirectories as needed
 subroutine mkdir(dir, echo)
