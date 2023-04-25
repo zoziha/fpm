@@ -144,13 +144,7 @@ contains
         call f_c_character(path, appended_path, len(path) + 1)
 
         allocate (cpath(buffersize))
-
-! The _WIN32 macro is currently not exported using gfortran.
-#if defined(FPM_BOOTSTRAP) && !defined(_WIN32)
-        ptr = realpath(appended_path, cpath)
-#else
         ptr = c_realpath(appended_path, cpath, buffersize)
-#endif
 
         if (c_associated(ptr)) then
             call c_f_character(cpath, real_path)
