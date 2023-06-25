@@ -1,0 +1,8 @@
+name = "preprocess_cpp_deps"
+
+[dependencies]
+utils = { path = "crate/utils" }
+
+[preprocess]
+[preprocess.cpp]
+macros = ["REAL64"]
