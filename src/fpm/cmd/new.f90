@@ -574,7 +574,7 @@ character(len=:,kind=tfc),allocatable :: littlefile(:)
     endif
     ! assumes git(1) is installed and in path
     if(which('git')/='')then
-      call run('git init ' // settings%name)
+      call run('git init -b main ' // settings%name)
     endif
 contains
 
