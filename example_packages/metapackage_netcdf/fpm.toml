@@ -1,0 +1,8 @@
+name = "metapackage_netcdf"
+# dependencies.netcdf="*"
+[build]
+external-modules = ['netcdf']
+link = ["netcdff"]
+
+[fortran]
+implicit-external = true
