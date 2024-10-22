@@ -173,6 +173,7 @@ subroutine init_from_name(this,name,compiler,error)
         case("minpack"); call init_minpack(this,compiler,error)
         case("mpi");     call init_mpi    (this,compiler,error)
         case("hdf5");    call init_hdf5   (this,compiler,error)
+        case("netcdf");  call init_netcdf (this,compiler,error)
         case default
             call syntax_error(error, "Package "//name//" is not supported in [metapackages]")
             return
@@ -479,6 +480,12 @@ subroutine resolve_metapackage_model(model,package,settings,error)
         call add_metapackage_model(model,package,settings,"hdf5",error)
         if (allocated(error)) return
     endif
+
+    ! netcdf
+    if (package%meta%netcdf%on) then
+        call add_metapackage_model(model,package,settings,"netcdf",error)
+        if (allocated(error)) return
+    end if
 
 end subroutine resolve_metapackage_model
 
@@ -1900,5 +1907,103 @@ subroutine init_hdf5(this,compiler,error)
                              string_t('hdf5')]
 
 end subroutine init_hdf5
+
+!> Inintialize NetCDF metapackage for current system
+subroutine init_netcdf(this,compiler,error)
+    class(metapackage_t), intent(inout) :: this
+    type(compiler_t), intent(in) :: compiler
+    type(error_t), allocatable, intent(out) :: error
+    character(*), parameter :: candidates(*) = &
+                 [character(15) :: 'netcdf-fortran','netcdf']
+    type(string_t) :: log,this_lib
+    type(string_t), allocatable :: libs(:),flags(:),modules(:),non_fortran(:)
+    character(:), allocatable :: module_flag,include_flag,name,libdir,ext,pref
+    integer :: i,j
+
+    module_flag = get_module_flag(compiler,"")
+    include_flag = get_include_flag(compiler,"")
+    
+    call destroy(this)
+    allocate(this%link_libs(0),this%incl_dirs(0),this%external_modules(0))
+    this%link_flags = string_t("")
+    this%flags = string_t("")
+
+    if (.not.assert_pkg_config()) then
+        call fatal_error(error,'netcdf metapackage requires pkg-config')
+        return
+    end if
+
+    name = 'NOT_FOUND'
+    find_package: do i=1,size(candidates)
+        if (pkgcfg_has_package(trim(candidates(i)))) then 
+            name = trim(candidates(i))
+            exit find_package
+        end if
+    end do find_package
+
+    if (name=='NOT_FOUND') then 
+        modules = pkgcfg_list_all(error) 
+        find_global_package: do i=1,size(modules)
+            if (str_begins_with_str(modules(i)%s,'netcdf')) then 
+                name = modules(i)%s
+                exit find_global_package
+            end if
+        end do find_global_package
+    end if
+
+    if (name=='NOT_FOUND') then 
+        call fatal_error(error,'pkg-config could not find a suitable netcdf package.')
+        return
+    end if
+
+    log = pkgcfg_get_version(name,error)
+    if (allocated(error)) return
+    allocate(this%version)    
+    call new_version(this%version,log%s,error)
+    if (allocated(error)) return
+
+    libs = pkgcfg_get_libs(name,error)
+    if (allocated(error)) return
+
+    libdir = ""
+    do i=1,size(libs)
+        
+        if (str_begins_with_str(libs(i)%s,'-l')) then 
+            this%has_link_libraries = .true.
+            this%link_libs = [this%link_libs, string_t(libs(i)%s(3:))]
+            
+        else ! -L and others: concatenate
+            this%has_link_flags = .true.
+            this%link_flags = string_t(trim(this%link_flags%s)//' '//libs(i)%s)
+
+            ! Also save library dir
+            if (str_begins_with_str(libs(i)%s,'-L')) then 
+               libdir = libs(i)%s(3:)  
+            elseif (str_begins_with_str(libs(i)%s,'/LIBPATH')) then
+               libdir = libs(i)%s(9:)
+            endif
+            
+        end if
+    end do
+
+    flags = pkgcfg_get_build_flags(name,.true.,error)
+    if (allocated(error)) return
+
+    do i=1,size(flags)
+        
+        if (str_begins_with_str(flags(i)%s,include_flag)) then 
+            this%has_include_dirs = .true.
+            this%incl_dirs = [this%incl_dirs, string_t(flags(i)%s(len(include_flag)+1:))]
+        else
+            this%has_build_flags = .true.
+            this%flags = string_t(trim(this%flags%s)//' '//flags(i)%s)
+        end if
+        
+    end do
+
+    this%has_external_modules = .true.
+    this%external_modules = [string_t('netcdf')]
+
+end subroutine init_netcdf
 
 end module fpm_meta
