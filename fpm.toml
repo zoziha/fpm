@@ -22,6 +22,7 @@ jonquil.git = "https://github.com/toml-f/jonquil"
 jonquil.rev = "4fbd4cf34d577c0fd25e32667ee9e41bf231ece8"
 fortran-shlex.git = "https://github.com/perazz/fortran-shlex"
 fortran-shlex.tag = "2.0.0"
+openmp = "*"
 
 [[test]]
 name = "cli-test"
