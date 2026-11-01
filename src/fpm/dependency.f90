@@ -61,7 +61,8 @@ module fpm_dependency
   use fpm_filesystem, only: exists, join_path, mkdir, canon_path, windows_path, list_files, is_dir, basename, &
                             os_delete_dir, get_temp_filename, parent_dir, is_absolute_path
   use fpm_git, only: git_target_revision, git_target_default, git_revision, serializable_t
-  use fpm_manifest, only: package_config_t, dependency_config_t, get_package_data, get_package_dependencies
+  use fpm_manifest, only: package_config_t, dependency_config_t, get_package_data, get_package_dependencies, &
+                          manifest_cache_t
   use fpm_manifest_dependency, only: manifest_has_changed, dependency_destroy
   use fpm_manifest_preprocess, only: operator(==)
   use fpm_strings, only: string_t, operator(.in.), operator(==), str
@@ -136,6 +137,8 @@ module fpm_dependency
     character(len=:), allocatable :: cache
     !> Custom path to the global config file
     character(len=:), allocatable :: path_to_config
+    !> Cache of parsed package manifests
+    type(manifest_cache_t) :: manifest_cache
 
   contains
 
@@ -728,7 +731,7 @@ contains
     end if
 
     manifest = join_path(proj_dir, "fpm.toml")
-    call get_package_data(package, manifest, error)
+    call self%manifest_cache%load(package, manifest, error)
     if (allocated(error)) return
 
     call dependency%register(package, proj_dir, fetch, revision, error)
@@ -1113,7 +1116,7 @@ contains
       main = node_ID==1  
       
       ! Get manifest
-      call get_package_data(manifest, join_path(node%proj_dir,"fpm.toml"), error)
+      call tree%manifest_cache%load(manifest, join_path(node%proj_dir,"fpm.toml"), error)
       if (allocated(error)) return
       
       call get_package_dependencies(manifest, main, dependency) 

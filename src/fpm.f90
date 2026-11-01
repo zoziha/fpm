@@ -160,7 +160,8 @@ subroutine build_model(model, settings, package_config, error)
             else
                 
                 ! Extract this dependency config
-                call get_package_data(dependency_config, file_name, error, apply_defaults=.true.)
+                call model%deps%manifest_cache%load(dependency_config, file_name, error, &
+                                                    apply_defaults=.true.)
                 if (allocated(error)) exit          
                 
                 ! Adapt it to the current profile/platform

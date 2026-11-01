@@ -7,6 +7,7 @@
 !> Additionally, the required data types for users of this module are reexported
 !> to hide the actual implementation details.
 module fpm_manifest
+    use,intrinsic :: iso_fortran_env, only : int64
     use fpm_manifest_example, only : example_config_t
     use fpm_manifest_executable, only : executable_config_t
     use fpm_manifest_dependency, only : dependency_config_t
@@ -17,7 +18,7 @@ module fpm_manifest
     use tomlf, only : toml_table
     use fpm_toml, only : read_package_file
     use fpm_manifest_test, only : test_config_t
-    use fpm_filesystem, only: join_path, exists, dirname, is_dir
+    use fpm_filesystem, only: join_path, exists, dirname, is_dir, canon_path, file_info
     use fpm_environment, only: os_is_unix
     use fpm_strings, only: string_t
     implicit none
@@ -27,6 +28,35 @@ module fpm_manifest
     public :: get_package_dependencies
     public :: default_example
     public :: package_config_t, dependency_config_t, preprocess_config_t
+
+    !> A single cached manifest
+    type, private :: manifest_cache_entry_t
+        !> Canonical manifest path (cache key)
+        character(:), allocatable :: key
+        !> File size in bytes when the entry was recorded
+        integer(int64) :: size = -1
+        !> File modification time when the entry was recorded
+        integer(int64) :: mtime = -1
+        !> Manifest without defaults applied
+        type(package_config_t) :: config
+    end type manifest_cache_entry_t
+
+    !> Cache of parsed package manifests
+    !>
+    !> The same `fpm.toml` is read several times during a single invocation
+    !> (every dependency graph iteration, then again when the model is built).
+    !> Entries are keyed by canonical path and validated with size and
+    !> modification time, so a changed manifest is parsed again.
+    type, public :: manifest_cache_t
+        private
+        !> Cached manifests
+        type(manifest_cache_entry_t), allocatable :: entries(:)
+        !> Number of valid entries in `entries`
+        integer :: n_entries = 0
+    contains
+        !> Return the manifest of a file, parsing it at most once
+        procedure :: load => manifest_cache_load
+    end type manifest_cache_t
 
 
 contains
@@ -106,8 +136,95 @@ contains
         !> Apply package defaults (uses file system operations)
         logical, intent(in), optional :: apply_defaults
 
+        logical :: defaults
+
+        defaults = .false.
+        if (present(apply_defaults)) defaults = apply_defaults
+
+        call read_manifest(package, file, error)
+        if (allocated(error)) return
+
+        call apply_manifest_defaults(package, file, defaults, error)
+
+    end subroutine get_package_data
+
+    !> Obtain package meta data, reusing an earlier parse of the same file
+    subroutine manifest_cache_load(self, package, file, error, apply_defaults)
+
+        !> Instance of the manifest cache
+        class(manifest_cache_t), intent(inout) :: self
+
+        !> Parsed package meta data
+        type(package_config_t), intent(out) :: package
+
+        !> Name of the package configuration file
+        character(len=*), intent(in) :: file
+
+        !> Error status of the operation
+        type(error_t), allocatable, intent(out) :: error
+
+        !> Apply package defaults (uses file system operations)
+        logical, intent(in), optional :: apply_defaults
+
+        integer(int64) :: size, mtime
+        integer :: i, pos
+        character(:), allocatable :: key
+        logical :: inspectable, defaults
+
+        defaults = .false.
+        if (present(apply_defaults)) defaults = apply_defaults
+
+        inspectable = file_info(file, size, mtime)
+        if (inspectable) key = canon_path(file)
+
+        pos = 0
+        if (inspectable) then
+            do i = 1, self%n_entries
+                if (self%entries(i)%key /= key) cycle
+                pos = i
+                exit
+            end do
+            if (pos > 0) then
+                if (self%entries(pos)%size == size .and. self%entries(pos)%mtime == mtime) then
+                    package = self%entries(pos)%config
+                    call apply_manifest_defaults(package, file, defaults, error)
+                    return
+                end if
+            end if
+        end if
+
+        call read_manifest(package, file, error)
+        if (allocated(error)) return
+
+        if (inspectable) then
+            if (pos == 0) then
+                call ensure_manifest_capacity(self, self%n_entries + 1)
+                self%n_entries = self%n_entries + 1
+                pos = self%n_entries
+                self%entries(pos)%key = key
+            end if
+            self%entries(pos)%size = size
+            self%entries(pos)%mtime = mtime
+            self%entries(pos)%config = package
+        end if
+
+        call apply_manifest_defaults(package, file, defaults, error)
+
+    end subroutine manifest_cache_load
+
+    !> Read and parse a manifest without applying defaults
+    subroutine read_manifest(package, file, error)
+
+        !> Parsed package meta data
+        type(package_config_t), intent(out) :: package
+
+        !> Name of the package configuration file
+        character(len=*), intent(in) :: file
+
+        !> Error status of the operation
+        type(error_t), allocatable, intent(out) :: error
+
         type(toml_table), allocatable :: table
-        character(len=:), allocatable :: root
 
         call read_package_file(table, file, error)
         if (allocated(error)) return
@@ -118,18 +235,62 @@ contains
         end if
 
         call new_package(package, table, dirname(file), error)
-        if (allocated(error)) return
 
-        if (present(apply_defaults)) then
-            if (apply_defaults) then
-                root = dirname(file)
-                if (len_trim(root) == 0) root = "."
-                call package_defaults(package, root, error)
-                if (allocated(error)) return
-            end if
+    end subroutine read_manifest
+
+    !> Apply package defaults, when requested
+    subroutine apply_manifest_defaults(package, file, enabled, error)
+
+        !> Package meta data to complete
+        type(package_config_t), intent(inout) :: package
+
+        !> Name of the package configuration file
+        character(len=*), intent(in) :: file
+
+        !> Whether defaults should be applied
+        logical, intent(in) :: enabled
+
+        !> Error status of the operation
+        type(error_t), allocatable, intent(out) :: error
+
+        character(len=:), allocatable :: root
+
+        if (.not. enabled) return
+
+        root = dirname(file)
+        if (len_trim(root) == 0) root = "."
+        call package_defaults(package, root, error)
+
+    end subroutine apply_manifest_defaults
+
+    !> Grow the cache storage to hold at least `min_capacity` entries
+    subroutine ensure_manifest_capacity(cache, min_capacity)
+
+        !> Instance of the manifest cache
+        type(manifest_cache_t), intent(inout) :: cache
+
+        !> Required number of entries
+        integer, intent(in) :: min_capacity
+
+        type(manifest_cache_entry_t), allocatable :: tmp(:)
+        integer :: new_capacity
+
+        if (min_capacity <= 0) return
+        if (allocated(cache%entries)) then
+            if (size(cache%entries) >= min_capacity) return
         end if
 
-    end subroutine get_package_data
+        new_capacity = 8
+        if (allocated(cache%entries)) new_capacity = 2 * size(cache%entries)
+        do while (new_capacity < min_capacity)
+            new_capacity = 2 * new_capacity
+        end do
+
+        allocate (tmp(new_capacity))
+        if (cache%n_entries > 0) tmp(1:cache%n_entries) = cache%entries(1:cache%n_entries)
+        call move_alloc(tmp, cache%entries)
+
+    end subroutine ensure_manifest_capacity
 
 
     !> Apply package defaults
