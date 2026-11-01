@@ -129,7 +129,7 @@ type build_target_t
     !> Targets in the same schedule group are guaranteed to be independent
     integer :: schedule = -1
 
-    !> Hash of the target inputs: its source file and the digests of its dependencies
+    !> Hash of the target inputs: source file, dependencies, flags and environment
     integer(int64) :: digest = 0
 
     !> Target digest of the last successful build
@@ -151,7 +151,7 @@ type build_target_t
          
         procedure :: is_executable_target
 
-        !> Digest of the target inputs: its source file and the digests of its dependencies
+        !> Digest of the target inputs: source file, dependencies, flags and environment
         procedure :: compute_digest
 
 end type build_target_t
@@ -1557,11 +1557,15 @@ subroutine set_output_dir(self, output_dir)
 
 end subroutine set_output_dir
 
-!> Digest of the target inputs: the digest of its source file, if any, combined
-!> with those of its dependencies, in an order-independent way.
+!> Digest of the target inputs: the digest of its source file, if any, the
+!> digest of its dependencies (in an order-independent way), the command line
+!> flags used to generate the target, and a fingerprint of the build
+!> environment (compiler binaries and global flags).
 !> The digests of the dependencies must be computed first
-pure function compute_digest(self) result(digest)
+pure function compute_digest(self, build_digest) result(digest)
     class(build_target_t), intent(in) :: self
+    !> Fingerprint of the build environment, provided by the backend
+    integer(int64), intent(in), optional :: build_digest
     integer(int64) :: digest
 
     integer :: i
@@ -1569,7 +1573,24 @@ pure function compute_digest(self) result(digest)
     character(8) :: bytes
 
     digest = 0
-    if (allocated(self%source)) digest = self%source%digest
+    if (present(build_digest)) digest = build_digest
+
+    if (allocated(self%source)) then
+        bytes = transfer(self%source%digest, bytes)
+        digest = fnv_1a(bytes, digest)
+    end if
+
+    ! Flags are part of the target inputs: changing them must rebuild the target
+    if (allocated(self%compile_flags)) digest = fnv_1a(self%compile_flags, digest)
+    if (allocated(self%link_flags)) digest = fnv_1a(self%link_flags, digest)
+    if (allocated(self%link_libraries)) then
+        do i=1,size(self%link_libraries)
+            digest = fnv_1a(self%link_libraries(i)%s, digest)
+        end do
+    end if
+
+    bytes = transfer(int(self%target_type, int64), bytes)
+    digest = fnv_1a(bytes, digest)
 
     dep_digests = [(self%dependencies(i)%ptr%digest, i=1,size(self%dependencies))]
     call sort_digests(dep_digests)

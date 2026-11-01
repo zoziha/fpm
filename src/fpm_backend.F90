@@ -25,11 +25,12 @@
 !>
 module fpm_backend
 
-use,intrinsic :: iso_fortran_env, only : stdin=>input_unit, stdout=>output_unit, stderr=>error_unit
+use,intrinsic :: iso_fortran_env, only : stdin=>input_unit, stdout=>output_unit, stderr=>error_unit, &
+                                         int64
 use fpm_error, only : fpm_stop, error_t
-use fpm_filesystem, only: basename, dirname, join_path, exists, mkdir, run, getline
+use fpm_filesystem, only: basename, dirname, join_path, exists, mkdir, run, getline, which, file_info
 use fpm_model, only: fpm_model_t
-use fpm_strings, only: string_t, operator(.in.)
+use fpm_strings, only: string_t, operator(.in.), fnv_1a
 use fpm_targets, only: build_target_t, build_target_ptr, FPM_TARGET_OBJECT, &
                        FPM_TARGET_C_OBJECT, FPM_TARGET_ARCHIVE, FPM_TARGET_EXECUTABLE, &
                        FPM_TARGET_CPP_OBJECT, FPM_TARGET_SHARED
@@ -68,6 +69,7 @@ subroutine build_package(targets,model,verbose,dry_run)
     type(string_t), allocatable :: build_dirs(:)
     type(string_t) :: temp
     type(error_t), allocatable :: error
+    integer(int64) :: build_digest
 
     type(build_progress_t) :: progress
     logical :: plain_output
@@ -86,10 +88,14 @@ subroutine build_package(targets,model,verbose,dry_run)
        if (.not.dry_run) call mkdir(build_dirs(i)%s,verbose)
     end do
 
+    ! Fingerprint the build environment once, so that changes to the compiler
+    ! binaries or global flags invalidate all cached target digests
+    build_digest = environment_digest(model)
+
     ! Perform depth-first topological sort of targets
     do i=1,size(targets)
 
-        call sort_target(targets(i)%ptr, dry_run)
+        call sort_target(targets(i)%ptr, dry_run, build_digest)
 
     end do
 
@@ -178,10 +184,12 @@ end subroutine build_package
 !> If `target` is marked as sorted, `target%schedule` should be an
 !> integer greater than zero indicating the region for scheduling
 !>
-recursive subroutine sort_target(target, mock)
+recursive subroutine sort_target(target, mock, build_digest)
     type(build_target_t), intent(inout), target :: target
     !> Optionally sort ALL targets if this is a dry run
     logical, optional, intent(in) :: mock
+    !> Fingerprint of the build environment
+    integer(int64), optional, intent(in) :: build_digest
 
     integer :: i, fh, stat
     logical :: dry_run
@@ -219,7 +227,7 @@ recursive subroutine sort_target(target, mock)
     ! Sort dependencies first: the target digest depends on theirs
     do i=1,size(target%dependencies)
 
-        call sort_target(target%dependencies(i)%ptr, dry_run)
+        call sort_target(target%dependencies(i)%ptr, dry_run, build_digest)
 
     end do
 
@@ -227,7 +235,7 @@ recursive subroutine sort_target(target, mock)
     ! and the digests of its dependencies. These catch a dependency rebuilt by an
     ! earlier run that did not rebuild this target (it stopped early, or did not
     ! include it, as `fpm build` does with tests)
-    target%digest = target%compute_digest()
+    target%digest = target%compute_digest(build_digest)
     target%skip = .false.
     if (allocated(target%digest_cached) .and. .not.dry_run) then
         target%skip = target%digest_cached == target%digest
@@ -392,5 +400,55 @@ subroutine print_build_log(target)
     end if
 
 end subroutine print_build_log
+
+
+!> Fingerprint of the build environment shared by all targets
+!>
+!> Combines the toolchain binaries (path, size and modification time) with the
+!> global compiler and linker flags, so that changing any of them invalidates
+!> the cached digest of every target.
+integer(int64) function environment_digest(model) result(digest)
+    type(fpm_model_t), intent(in) :: model
+
+    digest = 0
+
+    call fold_toolchain(model%compiler%fc, digest)
+    if (allocated(model%compiler%cc))  call fold_toolchain(model%compiler%cc, digest)
+    if (allocated(model%compiler%cxx)) call fold_toolchain(model%compiler%cxx, digest)
+    if (allocated(model%archiver%ar))  call fold_toolchain(model%archiver%ar, digest)
+
+    if (allocated(model%package_name))          digest = fnv_1a(model%package_name, digest)
+    if (allocated(model%fortran_compile_flags)) digest = fnv_1a(model%fortran_compile_flags, digest)
+    if (allocated(model%c_compile_flags))       digest = fnv_1a(model%c_compile_flags, digest)
+    if (allocated(model%cxx_compile_flags))     digest = fnv_1a(model%cxx_compile_flags, digest)
+    if (allocated(model%link_flags))            digest = fnv_1a(model%link_flags, digest)
+    if (allocated(model%build_prefix))          digest = fnv_1a(model%build_prefix, digest)
+
+end function environment_digest
+
+
+!> Fold a toolchain executable and its metadata into the environment digest
+subroutine fold_toolchain(tool, digest)
+    character(*), intent(in) :: tool
+    integer(int64), intent(inout) :: digest
+
+    character(:), allocatable :: resolved
+    character(8) :: bytes
+    integer(int64) :: size, mtime
+
+    digest = fnv_1a(tool, digest)
+
+    resolved = which(tool)
+    if (len_trim(resolved) == 0) resolved = tool
+    digest = fnv_1a(resolved, digest)
+
+    if (file_info(resolved, size, mtime)) then
+        bytes = transfer(size, bytes)
+        digest = fnv_1a(bytes, digest)
+        bytes = transfer(mtime, bytes)
+        digest = fnv_1a(bytes, digest)
+    end if
+
+end subroutine fold_toolchain
 
 end module fpm_backend
